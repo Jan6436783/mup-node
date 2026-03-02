@@ -105,3 +105,15 @@ module.exports = {
   plugins: [ 'mup-node' ]
 };
 ```
+
+## Demo: Stallarbeit App
+
+Für den beschriebenen Anwendungsfall gibt es eine einfache, komplett deutschsprachige Demo unter `examples/stall-app` (inkl. Login, Rollen, Mitarbeiterverwaltung und Terminverwaltung über die Oberfläche).
+
+Starten:
+
+```bash
+node examples/stall-app/server.js
+```
+
+Dann im Browser öffnen: `http://localhost:4173`
