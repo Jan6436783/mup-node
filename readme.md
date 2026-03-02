@@ -1,107 +1,129 @@
-# mup-node plugin
+const express = require("express");
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
+const session = require("express-session");
 
-Deploy your Node.js apps with Meteor Up!
+const app = express();
+app.use(express.urlencoded({ extended: true }));
 
-This plugin is under development and is missing some features.
+app.use(session({
+    secret: process.env.SESSION_SECRET || "geheim",
+    resave: false,
+    saveUninitialized: false
+}));
 
-## Getting started
+mongoose.connect(process.env.MONGO_URI);
 
-First, install mup and mup-node with:
+// ================= Modelle =================
+const User = mongoose.model("Benutzer", {
+    username: String,
+    password: String,
+    role: String // manager oder mitarbeiter
+});
 
-```bash
-npm i -g mup mup-node
-```
+const Item = mongoose.model("Eintrag", {
+    type: String, // Bewegung, Fütterung, Notfall, Termine
+    text: String,
+    status: { type: String, default: "offen" }
+});
 
-Second, create a config with
-``bash
-mup init
-``
+// ================= Middleware =================
+function isAuth(req, res, next) {
+    if (req.session.userId) return next();
+    res.redirect("/");
+}
 
-Open the config, and make the following adjustments:
+async function getUser(req) {
+    return await User.findById(req.session.userId);
+}
 
-For each server:
-- host - Usually is the IP Address of the server
-- server authentication - You can use a password or set pem to the path to a private key. If neither are set, it uses ssh-agent
+// ================= Layout =================
+function layout(title, content, user) {
+    let menu = `<div style="position:fixed; top:10px; left:10px;">`;
 
-In the `app` section:
-
-- name: A unique name, with no spaces
-- path: Path to the app, relative to the config.
-- type: Set to `node` to let mup know that this plugin will manage the app
-
-Add a `plugins` array with `mup-node`:
-
-```js
-module.exports = {
-  // ... rest of config
-  plugins: [ 'mup-node' ]
-};
-```
-
-Third, setup the server. Mup will install everything needed to run the app. Run:
-
-```bash
-mup setup
-```
-
-Fourth, deploy the app. Run
-
-```bash
-mup deploy
-```
-
-Mup will upload your app, build a docker container, and run it.
-
-## Bundling
-
-`mup-node` copies the app's files to the server. The `.git` and `node_module` directories are ignored.Additional directories can be ignored by creating a `.mupignore` file in your app's root folder. `.mupignore` uses the same syntax as `.gitignore`.
-
-## Building Image
-
-The base image is `node:<node version>`. As long as the package.json doesn't change, the `node_modules` is cached between deploys.
-
-You can add instructions to the Dockerfile in the config at `app.docker.buildInstructions`. For more details, look at the example in the next section.
-
-If your package.json has a `mup:postinstall` script, it will be run after `npm install`.
-
-## Options
-
-`mup-node` is configured with the `app` object in your config. The available options are:
-
-```js
-module.exports = {
-  app: {
-    name: 'name-of-app',
-    path: '../path/to/app',
-    type: 'node',
-    nodeVersion: '8.8.1',
-    servers: {
-      one: {},
-      two: {}
-    },
-    env: {
-      MONGO_URL: 'mongodb://localhost:8000',
-      // Port the app is available on, defaults to 80
-      PORT: 5000
-    },
-    // Amount of time to allow the app to start. If the app isn't running within this
-    // much time, mup rolls back to the previous version. Set to -1 to disable.
-    deployCheckWaitTime: 60,
-    // NPM script to run when starting the app
-    startScript: 'start:production'
-    docker: {
-      args: ['--network=net'],
-      networks: ['net2', 'net3'],
-      // Dockerfile instructions to run before adding the app and running `npm install`
-      buildInstructions: [
-        // Copy some of the app's files needed for the post-install script
-        'COPY ./scripts ./scripts',
-        'RUN apt-get update && apt-get install libcairo2-dev libjpeg-dev libpango1.0-dev libgif-dev build-essential g++ -y',
-      ],
-      // Port expose from the container. This does not affect the port the app is accessed on. Default is 3000
-      imagePort: 3000
+    if (!user) {
+        menu += `<a href="/">Login</a><br><a href="/notfall">Notfall</a>`;
+    } else {
+        menu += `
+        <a href="/bewegung">Bewegung</a><br>
+        <a href="/fuetterung">Fütterung</a><br>
+        <a href="/notfall">Notfall</a><br>
+        <a href="/mitarbeiter">Mitarbeiter</a><br>
+        <a href="/termine">Termine</a><br><br>
+        <a href="/logout">Abmelden</a>
+        `;
     }
-  },
-  plugins: [ 'mup-node' ]
-};
-```
+
+    menu += "</div>";
+
+    return `
+    <html>
+    <head>
+    <title>${title}</title>
+    </head>
+    <body style="margin-left:150px; font-family:Arial;">
+    ${menu}
+    <h1>${title}</h1>
+    ${content}
+    </body>
+    </html>
+    `;
+}
+
+// ================= Start / Login =================
+app.get("/", (req, res) => {
+    res.send(layout("Login", `
+    <form method="POST" action="/login">
+        <input name="username" placeholder="Benutzername" required><br><br>
+        <input type="password" name="password" placeholder="Passwort" required><br><br>
+        <button>Login</button>
+    </form>
+    <br><a href="/register">Registrieren</a>
+    `));
+});
+
+app.post("/login", async (req, res) => {
+    const user = await User.findOne({ username: req.body.username });
+    if (!user) return res.send("Benutzer nicht gefunden");
+    const match = await bcrypt.compare(req.body.password, user.password);
+    if (!match) return res.send("Falsches Passwort");
+
+    req.session.userId = user._id;
+    res.redirect("/bewegung");
+});
+
+// ================= Register =================
+app.get("/register", (req, res) => {
+    res.send(`
+    <form method="POST" action="/register">
+        <input name="username" placeholder="Benutzername" required><br><br>
+        <input type="password" name="password" placeholder="Passwort" required><br><br>
+        Rolle:
+        <select name="role">
+            <option value="mitarbeiter">Mitarbeiter</option>
+            <option value="manager">Manager</option>
+        </select><br><br>
+        <button>Registrieren</button>
+    </form>
+    `);
+});
+
+app.post("/register", async (req, res) => {
+    const hashed = await bcrypt.hash(req.body.password, 10);
+    await User.create({
+        username: req.body.username,
+        password: hashed,
+        role: req.body.role
+    });
+    res.redirect("/");
+});
+
+// ================= Dashboard-Seiten =================
+async function pageHandler(req, res, type) {
+    const user = await getUser(req);
+    const items = await Item.find({ type });
+
+    let list = items.map(i => `
+        <li>
+            ${i.text} - ${i.status}
+            ${user.role === "mitarbeiter"
